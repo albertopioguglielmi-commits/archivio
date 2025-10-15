@@ -808,6 +808,14 @@ async function uploadImageFile(file){
       }
 
       showMsg('✅ Immagine aggiunta con successo!', 'success');
+      // 🔁 Ping automatico a Netlify per rebuild
+try {
+  const hookUrl = "https://api.netlify.com/build_hooks/XXXXXXXXXXXXXX"; // <--- il tuo hook
+  fetch(hookUrl, { method: "POST" });
+  console.log("🔁 Rebuild Netlify avviato");
+} catch (err) {
+  console.warn("Impossibile pingare Netlify:", err);
+}
       form.reset();
       if (selEl) selEl.selectedIndex = 0;
 
