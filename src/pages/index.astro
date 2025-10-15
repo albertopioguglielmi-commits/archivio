@@ -810,7 +810,7 @@ async function uploadImageFile(file){
       showMsg('✅ Immagine aggiunta con successo!', 'success');
       // 🔁 Ping automatico a Netlify per rebuild
 try {
-  const hookUrl = "https://api.netlify.com/build_hooks/XXXXXXXXXXXXXX"; // <--- il tuo hook
+  const hookUrl = "https://api.netlify.com/build_hooks/68ef6c49efb989c214473357"; // <--- il tuo hook
   fetch(hookUrl, { method: "POST" });
   console.log("🔁 Rebuild Netlify avviato");
 } catch (err) {
