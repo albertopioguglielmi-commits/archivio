@@ -1,16 +1,685 @@
 ---
+import Airtable from 'airtable';
 
+/* ---------- Utility ---------- */
+const normalizeTitle = (s) =>
+  (s || "")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+
+const titleAliases = {
+  "twentysix gasoline station": "twentysix gasoline stations",
+  "change imagery": "chance imagery",
+  "change imaginary": "chance imagery",
+  "every building on the sunset trip": "every building on the sunset strip"
+};
+
+/* ---------- Descrizioni manuali ---------- */
+const descrizioni = {
+  "Various Small Fires":
+    "Libro d’artista fotografico di Ed Ruscha composto da immagini di piccoli incendi seguiti da un bicchiere di latte. Ironico e minimale, manifesto del concettualismo americano.",
+  "Twentysix Gasoline Stations":
+    "Prima opera concettuale di Ed Ruscha (1963), 26 fotografie di stazioni di servizio lungo la Route 66. Prototipo del libro d’artista moderno.",
+  "Xerox Book":
+    "Progetto editoriale del 1968 curato da Seth Siegelaub e Jack Wendler, realizzato con fotocopie. Partecipano LeWitt, Kosuth, Morris e altri artisti concettuali.",
+  "Assemblage, Environments And Happenings":
+    "Volume teorico di Allan Kaprow (1965) sul passaggio dall’assemblage all’happening; fondativo per l’arte ambientale e performativa.",
+  "Limites Critique":
+    "Libro di Daniel Buren (1970) edito da Yvon Lambert: riflessione sui limiti percettivi e istituzionali dell’arte, con interventi a bande verticali.",
+  "Silence":
+    "Raccolta di saggi e conferenze di John Cage (1961) sulla musica aleatoria e sull’ascolto. Testo fondamentale della sperimentazione sonora.",
+  "Store Days":
+    "Libro di Claes Oldenburg (1967) che documenta lo Store, spazio-negozio dove gli oggetti quotidiani diventavano sculture ironiche.",
+  "Function":
+    "Opera concettuale di Joseph Kosuth (1970, Sperone Editore): riflessione su linguaggio, funzione e significato in arte.",
+  "The Paper Snake":
+    "Libro-collage di Ray Johnson (1965) con lettere, disegni e collage della sua attività di mail art; ironico e intimo.",
+  "Le Ultime Parole Famose":
+    "Breve pubblicazione concettuale di Michelangelo Pistoletto (1967): riflessione ironica e autoriflessiva sull’identità dell’artista.",
+  "Changes":
+    "Libro di Merce Cunningham (1968): testi e immagini su casualità e struttura coreografica, in dialogo con le teorie di John Cage.",
+  "Postface Jefferson's Birthday":
+    "Opera di Dick Higgins (1964) in ambito Fluxus: fonde poesia concreta e riflessione politica.",
+  "Fluxus N° March 1964":
+    "Numero della rivista Fluxus (1964): testi, collage e manifesti di artisti come Maciunas, Higgins, Paik, Brecht.",
+  "An Anthology":
+    "Antologia curata da La Monte Young e Jackson Mac Low (1963) con testi e partiture di Cage, Ono, Paik, Brecht e altri.",
+  "Selected Writings":
+    "Raccolta di scritti di La Monte Young e Marian Zazeela (1969) su musica d’avanguardia ed estetica minimale.",
+  "Chance Imagery":
+    "Libro di George Brecht (1966, Something Else Press) sul ruolo del caso nei processi creativi; ponte tra scienza, linguaggio e arte.",
+  "Every Building On The Sunset Strip":
+    "Progetto fotografico di Ed Ruscha (1966) che documenta tutti gli edifici lungo la Sunset Strip in formato a fisarmonica.",
+  "Fould Out":
+    "Libro d’artista di Martin Maloney (1969) con pagine pieghevoli (fold out); gioco visivo e linguistico sulla struttura del libro."
+};
+
+/* ---------- Fallback immagini ---------- */
+const fallbackImgs = {
+  "Twentysix Gasoline Stations": "https://upload.wikimedia.org/wikipedia/en/0/0b/Twentysix_Gasoline_Stations.jpg",
+  "Various Small Fires": "https://upload.wikimedia.org/wikipedia/en/8/8a/Various_Small_Fires.jpg",
+  "Every Building On The Sunset Strip": "https://upload.wikimedia.org/wikipedia/en/f/f7/Every_Building_on_the_Sunset_Strip.jpg",
+  "Silence": "https://upload.wikimedia.org/wikipedia/en/a/a8/John_Cage_Silence_book_cover.jpg",
+  "Assemblage, Environments And Happenings": "https://cdn.artforum.com/uploads/upload.001/id26206/article00_large.jpg",
+  "Xerox Book": "https://d32dm0rphc51dk.cloudfront.net/gsyjtlhyv1xr1ddt8fgs0a/large.jpg",
+  "Chance Imagery": "https://www.printedmatter.org/assets/files/events/1022/PMweb.Brecht-Poster.jpg"
+};
+
+/* ---------- Fetch da Airtable ---------- */
+const base = new Airtable({
+  apiKey: import.meta.env.PUBLIC_AIRTABLE_API_KEY
+}).base(import.meta.env.PUBLIC_AIRTABLE_BASE_ID);
+
+let items = [];
+try {
+  const records = await base(import.meta.env.PUBLIC_AIRTABLE_TABLE_NAME)
+    .select({ maxRecords: 100 })
+    .all();
+
+  items = records.map(record => ({
+    recordId: record.id,
+    titolo: record.fields.Titolo,
+    autore: record.fields.Autore,
+    anno: record.fields.Anno,
+    editore: record.fields.Editore,
+    luogo: record.fields["Luogo di pubblicazione"],
+    formato: record.fields.Formato,
+    tiratura: record.fields.Tiratura,
+    pagine: record.fields.Pagine,
+    descrizione: record.fields.Descrizione?.trim() || undefined,
+    attachments: record.fields.Immagini || [],
+    immagini: (record.fields.Immagini || []).map(a => a.url)
+  }));
+} catch (error) {
+  console.error("Errore caricamento dati:", error);
+}
+
+/* ---------- Normalizzazione + merge dati ---------- */
+const descrizioniNormalized = Object.fromEntries(
+  Object.entries(descrizioni).map(([k, v]) => [normalizeTitle(k), v])
+);
+const fallbackImgsNormalized = Object.fromEntries(
+  Object.entries(fallbackImgs).map(([k, v]) => [normalizeTitle(k), v])
+);
+
+items = items.map(item => {
+  const rawKey = normalizeTitle(item.titolo);
+  const canonicalKey = titleAliases[rawKey] || rawKey;
+
+  const finalDescrizione =
+    (item.descrizione && item.descrizione.trim()) ||
+    descrizioniNormalized[canonicalKey] ||
+    "Nessuna descrizione disponibile.";
+
+  const finalImmagini =
+    item.immagini.length
+      ? item.immagini
+      : (fallbackImgsNormalized[canonicalKey] ? [fallbackImgsNormalized[canonicalKey]] : []);
+
+  return { ...item, descrizione: finalDescrizione, immagini: finalImmagini };
+});
 ---
+<html lang="it">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width" />
+    <title>Archivio</title>
+    <style>
+/* ====== BASE ====== */
+html, body { height: 100%; }
+html { margin: 0; }
+body {
+  margin: 0;
+  padding: 0;
+  font-family: "Helvetica Neue", Arial, system-ui, sans-serif;
+  color: #0b0b0b;
+  background: #fff;
+  overflow-y: auto;
+}
 
-<html lang="en">
-	<head>
-		<meta charset="utf-8" />
-		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-		<meta name="viewport" content="width=device-width" />
-		<meta name="generator" content={Astro.generator} />
-		<title>Astro</title>
-	</head>
-	<body>
-		<h1>Astro</h1>
-	</body>
+/* ====== TABELLA ====== */
+table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: #fff;
+  border: 3px solid #0b0b0b;
+  border-left: 0;
+  table-layout: fixed;
+}
+thead { background: #e8e8e8; font-weight: 600; }
+th, td {
+  padding: 12px 8px;
+  vertical-align: top;
+  font-size: 12px;
+  line-height: 1.25;
+  border-bottom: 1.5px solid #0b0b0b;
+  border-left: 1.5px solid #0b0b0b;
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
+}
+thead th { border-bottom: 3px solid #0b0b0b; }
+
+td:first-child, th:first-child { width: 22%; min-width: 260px; }
+th:nth-child(2) { min-width: 220px; } /* Titolo */
+th:nth-child(3) { min-width: 160px; } /* Autore */
+th:nth-child(6) { min-width: 160px; } /* Luogo */
+th:nth-child(10){ min-width: 260px; } /* Descrizione */
+
+tbody td:nth-child(10) { font-size: 12px; line-height: 1.35; padding-top: 12px; padding-bottom: 12px; }
+thead th:nth-child(10) { font-size: 12px; }
+
+/* ====== GALLERIA IMMAGINI IN CELLA ====== */
+.gallery { position: relative; }
+.img-strip{
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scroll-behavior: smooth;
+}
+.img-strip::-webkit-scrollbar{ height: 6px; }
+.img-strip::-webkit-scrollbar-thumb{ background:#bbb; }
+
+.thumb{
+  display: block;
+  width: 100%;
+  max-width: 360px;
+  height: auto;
+  border: 3px solid #0b0b0b;
+  border-radius: 0;
+  cursor: zoom-in;
+  flex: 0 0 auto;
+  background: #fff;
+}
+
+.gallery-btn{
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 3px solid #0b0b0b;
+  background: #fff;
+  color: #0b0b0b;
+  width: 28px;
+  height: 28px;
+  cursor: pointer;
+  user-select: none;
+  display: none;
+}
+.gallery:has(.thumb + .thumb) .gallery-btn { display: grid; place-items: center; }
+.gallery-btn:hover{ background:#fff200; }
+.gallery-prev{ left: -6px; }
+.gallery-next{ right: -6px; }
+
+/* ====== ORDINAMENTO ====== */
+.th-label { display: inline-flex; align-items: center; gap: .35rem; white-space: nowrap; }
+.sort-btn {
+  border: none; background: transparent; cursor: pointer;
+  padding: 0; margin: 0; line-height: 1; font-size: 16px; color: #0b0b0b; display: inline-flex; align-items: center;
+}
+.sort-btn .sort-ind { transition: transform .12s ease; }
+.sort-btn:hover .sort-ind { transform: translateY(-1px); }
+
+.title-text { color: #0b0b0b; font-weight: 700; }
+tbody tr { transition: background-color .15s ease; }
+tbody tr:hover { background: #fff200; }
+
+/* ====== MODALE IMMAGINE ====== */
+.modal {
+  display: none; position: fixed; inset: 0;
+  background: rgba(0,0,0,.6);
+  justify-content: center; align-items: center;
+  z-index: 2000; opacity: 0; transition: opacity .2s ease;
+}
+.modal.show { display: flex; opacity: 1; }
+.modal img { max-width: 88vw; max-height: 88vh; border: 3px solid #0b0b0b; border-radius: 0; background: #fff; }
+.close-btn { position: absolute; top: 10px; right: 14px; font-size: 24px; color: #fff; cursor: pointer; }
+
+/* ====== PALLA CONTATORE ====== */
+.ball {
+  position: fixed; left: 20px; top: 20px; width: 64px; height: 64px; border-radius: 50%;
+  background: rgba(0,0,0,0.15); border: 2px solid #0b0b0b; color: #0b0b0b;
+  display: grid; place-items: center; font-weight: 700; font-size: 18px;
+  user-select: none; cursor: grab; z-index: 1500; backdrop-filter: blur(2px);
+  box-shadow: 0 2px 0 rgba(0,0,0,0.2); transition: background-color .15s ease; touch-action: none; will-change: transform;
+}
+.ball:hover { background: rgba(255,255,255,0.5); }
+.ball:active { cursor: grabbing; }
+
+/* ====== HINTS (Q & W) ====== */
+.hints-row{
+  position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+  gap: 32px; pointer-events: none; z-index: 700;
+}
+.hints-row .hint{ font-weight: 700; font-size: 14px; color: #0b0b0b; opacity: .85; }
+.hints-row .badge{ background: transparent; border: none; padding: 0; }
+@media (max-width: 520px){ .hints-row{ flex-direction: column; gap:8px; } }
+
+/* ====== OVERLAY RICERCA ====== */
+.search-overlay {
+  position: fixed; inset: 0; display: none; align-items: flex-start; justify-content: center;
+  padding-top: 8vh; background: transparent; z-index: 1200; opacity: 0; transition: opacity .15s ease;
+}
+.search-overlay.show { display: flex; opacity: 1; }
+.search-box { display: flex; align-items: center; gap: 8px; background: transparent; border: none; border-radius: 0; padding: 0; min-width: 420px; max-width: 80vw; box-shadow: none; }
+.search-input { flex: 1; font-size: 16px; line-height: 1.2; border: 2px solid #0b0b0b; border-radius: 0; padding: 6px 10px; outline: none; }
+.search-input:focus { box-shadow: inset 0 0 0 2px #fff200; }
+.search-close { border: 2px solid #0b0b0b; background: #fff; border-radius: 0; font-size: 18px; line-height: 1; padding: 4px 8px; cursor: pointer; }
+.search-close:hover { background: #fff200; }
+@media (max-width: 680px) { .search-box { min-width: auto; width: calc(100vw - 32px); } }
+
+/* ====== POP-UP CONTRIBUTO ====== */
+.contribute-overlay {
+  position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+  background: rgba(0,0,0,.55); z-index: 1700; opacity: 0; transition: opacity .18s ease;
+}
+.contribute-overlay.show { display: flex; opacity: 1; }
+.contribute-box {
+  position: relative;
+  background: #fff; border: 3px solid #0b0b0b; border-radius: 0;
+  width: min(720px, 92vw); max-height: 86vh; overflow: auto; box-shadow: 0 2px 0 rgba(0,0,0,.25);
+  padding: 28px 32px;
+}
+.contribute-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 3px solid #0b0b0b; padding: 6px 0 16px; margin-bottom: 20px; }
+.contribute-header h3 { margin: 0; font-size: 18px; line-height: 1.1; }
+.contrib-close { border: 2px solid #0b0b0b; background: #fff; border-radius: 0; font-size: 18px; line-height: 1; padding: 4px 8px; cursor: pointer; }
+.contrib-close:hover { background: #fff200; }
+.contribute-form{ display: grid; row-gap: 18px; }
+.form-group{ margin: 0; display: grid; row-gap: 10px; }
+.form-group label { font-weight: 700; }
+
+.form-group input[type="text"],
+.form-group input[type="url"],
+.form-group input[type="file"],
+.form-group select { min-height: 44px; }
+
+.form-group input[type="text"]:hover,
+.form-group input[type="url"]:hover,
+.form-group input[type="file"]:hover,
+.form-group select:hover{ background:#fff200; }
+.form-group input[type="text"]:focus,
+.form-group input[type="url"]:focus,
+.form-group select:focus{ box-shadow: inset 0 0 0 2px #fff200; }
+
+.submit-btn { border: 3px solid #0b0b0b; background: #fff; padding: 12px 16px; font-weight: 700; cursor: pointer; }
+.submit-btn:hover { background: #fff200; }
+.form-message { margin-top: 14px; font-weight: 700; display: none; }
+.form-message.success { display: block; color: #046c4e; }
+.form-message.error   { display: block; color: #a11; }
+    /* ====== FORM: rifiniture ====== */
+/* Wrapper visivo per il file input (niente doppio bordo) */
+.file-wrap{
+  border: 3px solid #0b0b0b;
+  padding: 8px 10px;
+  background:#fff;
+}
+.file-wrap:hover{ background:#fff200; }
+.file-wrap input[type="file"]{
+  width: 100%;
+  border: 0;          /* ← rimuove il bordo interno che creava l’effetto “doppio box” */
+  padding: 0;
+  background: transparent;
+}
+.form-group select{ min-height: 44px; }
+</style>
+</head>
+
+<body>
+    <table id="table" data-sort-key="" data-sort-dir="asc">
+      <thead>
+        <tr>
+          <th>Immagine</th>
+          <th><span class="th-label">Titolo <button class="sort-btn" data-key="titolo" data-type="text" aria-label="Ordina"><span class="sort-ind">↕︎</span></button></span></th>
+          <th><span class="th-label">Autore <button class="sort-btn" data-key="autore" data-type="text" aria-label="Ordina"><span class="sort-ind">↕︎</span></button></span></th>
+          <th><span class="th-label">Anno <button class="sort-btn" data-key="anno" data-type="num" aria-label="Ordina"><span class="sort-ind">↕︎</span></button></span></th>
+          <th><span class="th-label">Editore <button class="sort-btn" data-key="editore" data-type="text" aria-label="Ordina"><span class="sort-ind">↕︎</span></button></span></th>
+          <th><span class="th-label">Luogo <button class="sort-btn" data-key="luogo" data-type="text" aria-label="Ordina"><span class="sort-ind">↕︎</span></button></span></th>
+          <th><span class="th-label">Formato <button class="sort-btn" data-key="formato" data-type="text" aria-label="Ordina"><span class="sort-ind">↕︎</span></button></span></th>
+          <th><span class="th-label">Tiratura <button class="sort-btn" data-key="tiratura" data-type="num-like" aria-label="Ordina"><span class="sort-ind">↕︎</span></button></span></th>
+          <th><span class="th-label">Pagine <button class="sort-btn" data-key="pagine" data-type="num" aria-label="Ordina"><span class="sort-ind">↕︎</span></button></span></th>
+          <th><span class="th-label">Descrizione <button class="sort-btn" data-key="descrizione" data-type="text" aria-label="Ordina"><span class="sort-ind">↕︎</span></button></span></th>
+        </tr>
+      </thead>
+      <tbody>
+        {items.map(item => (
+          <tr data-record-id={item.recordId}>
+            <td>
+              <div class="gallery">
+                <div class="img-strip">
+                  {item.immagini.length > 0 && item.immagini.map((u) => (
+                    <img src={u} alt={item.titolo} class="thumb" data-full={u} />
+                  ))}
+                </div>
+                <button class="gallery-btn gallery-prev" aria-label="Precedente">‹</button>
+                <button class="gallery-btn gallery-next" aria-label="Successivo">›</button>
+              </div>
+            </td>
+            <td><span class="title-text">{item.titolo}</span></td>
+            <td>{item.autore || "-"}</td>
+            <td>{item.anno || "-"}</td>
+            <td>{item.editore || "-"}</td>
+            <td>{item.luogo || "-"}</td>
+            <td>{item.formato || "-"}</td>
+            <td>{item.tiratura || "-"}</td>
+            <td>{item.pagine || "-"}</td>
+            <td>{item.descrizione}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+
+    <div class="hints-row" id="hintsRow">
+      <div class="hint" id="searchHint"><span class="badge">Premi Q per effettuare una ricerca</span></div>
+      <div class="hint" id="contributeHint"><span class="badge">Premi W per contribuire all'archivio</span></div>
+    </div>
+
+    <div class="search-overlay" id="searchOverlay" aria-hidden="true">
+      <div class="search-box" role="dialog" aria-label="Ricerca nell'archivio">
+        <input id="searchInput" class="search-input" type="text" placeholder="Cerca in titolo, autore, anno, editore…" autocomplete="off" spellcheck="false" />
+        <button id="searchClose" class="search-close" aria-label="Chiudi">✕</button>
+      </div>
+    </div>
+
+    <div class="contribute-overlay" id="contributeOverlay" aria-hidden="true">
+      <div class="contribute-box" role="dialog" aria-label="Contribuisci all'archivio">
+        <div class="contribute-header">
+          <h3>Aggiungi un’immagine a un’opera esistente</h3>
+          <button id="contributeClose" class="contrib-close" aria-label="Chiudi">✕</button>
+        </div>
+        <form id="contribute-form" class="contribute-form">
+          <div class="form-group">
+            <label for="c_work_select">Seleziona opera *</label>
+            <select id="c_work_select" name="workId" required>
+              <option value="" disabled selected>— Seleziona —</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="c_image_file">Oppure carica un file</label>
+            <div class="file-wrap">
+              <input type="file" id="c_image_file" accept="image/*" />
+            </div>
+            <small>
+              Per l’upload diretto configura:
+              • <strong>Cloudinary</strong>: <code>PUBLIC_CLOUDINARY_CLOUD_NAME</code>, <code>PUBLIC_CLOUDINARY_UPLOAD_PRESET</code>
+              • <strong>Imgur</strong>: <code>PUBLIC_IMGUR_CLIENT_ID</code>
+            </small>
+          </div>
+          <button type="submit" class="submit-btn">Aggiungi immagine</button>
+          <div id="form-message" class="form-message"></div>
+        </form>
+      </div>
+    </div>
+
+    <div class="ball" id="ball">{items.length}</div>
+
+    <div class="modal" id="imageModal">
+      <span class="close-btn" id="closeImage">&times;</span>
+      <img id="modalImg" src="" alt="Preview" />
+    </div>
+    
+    <script id="worksData" type="application/json" is:inline>
+      {JSON.stringify(items.map(i => ({
+        id: i.recordId,
+        title: i.titolo,
+        attachments: (i.attachments || []).map(a => ({ id: a.id, url: a.url }))
+      })))}
+    </script>
+
+    <script>
+/* --- Modal immagine --- */
+(function(){
+  const modal = document.getElementById("imageModal"), modalImg = document.getElementById("modalImg"), closeImage = document.getElementById("closeImage");
+  document.addEventListener("click", function(e){
+    if (e.target?.classList?.contains("thumb")) {
+      const full = e.target.dataset.full || e.target.src;
+      if (full) { modalImg.src = full; modal.classList.add("show"); }
+    }
+  });
+  closeImage?.addEventListener("click", () => modal.classList.remove("show"));
+  modal?.addEventListener("click", e => { if (e.target === modal) modal.classList.remove("show"); });
+})();
+
+/* --- Pulsanti galleria (scroll) --- */
+(function(){
+  document.querySelectorAll("tbody .gallery").forEach(gallery => {
+    const strip = gallery.querySelector(".img-strip"), prev = gallery.querySelector(".gallery-prev"), next = gallery.querySelector(".gallery-next");
+    if (!strip || !prev || !next) return;
+    const step = 380;
+    prev.addEventListener("click", () => strip.scrollBy({left: -step, behavior: "smooth"}));
+    next.addEventListener("click", () => strip.scrollBy({left: step, behavior: "smooth"}));
+  });
+})();
+
+/* --- Ordinamento tabella --- */
+(function(){
+  const table = document.getElementById("table"), tbody = table?.querySelector("tbody");
+  if (!table || !tbody) return;
+  const colIndex = { titolo: 2, autore: 3, anno: 4, editore: 5, luogo: 6, formato: 7, tiratura: 8, pagine: 9, descrizione: 10 };
+  const numFromText = (s) => parseFloat(String(s || "").match(/-?\d+(\.\d+)?/)?.[0] || NaN);
+  const updateIndicators = (activeKey, dir) => {
+    document.querySelectorAll(".sort-btn .sort-ind").forEach(el => { el.textContent = "↕︎"; });
+    const btn = document.querySelector(`.sort-btn[data-key="${activeKey}"] .sort-ind`);
+    if (btn) btn.textContent = (dir === "asc" ? "▲" : "▼");
+  };
+  const sortBy = (key, type, dir) => {
+    const rows = Array.from(tbody.querySelectorAll("tr"));
+    const idx = colIndex[key] || 2;
+    rows.sort((a, b) => {
+      const aText = a.cells[idx - 1]?.innerText || "", bText = b.cells[idx - 1]?.innerText || "";
+      let cmp = 0;
+      if (type === "num") cmp = (parseFloat(aText) || -Infinity) - (parseFloat(bText) || -Infinity);
+      else if (type === "num-like") cmp = (numFromText(aText) || -Infinity) - (numFromText(bText) || -Infinity);
+      else cmp = aText.localeCompare(bText, 'it', { sensitivity: 'base' });
+      return dir === "asc" ? cmp : -cmp;
+    });
+    tbody.append(...rows);
+    updateIndicators(key, dir);
+    table.dataset.sortKey = key;
+    table.dataset.sortDir = dir;
+  };
+  document.querySelectorAll(".sort-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const { key, type = "text" } = btn.dataset;
+      const { sortKey, sortDir = "asc" } = table.dataset;
+      const nextDir = (sortKey === key && sortDir === "asc") ? "desc" : "asc";
+      sortBy(key, type, nextDir);
+    });
+  });
+})();
+
+/* --- Ricerca (Q) --- */
+(function(){
+  const overlay = document.getElementById("searchOverlay"), input = document.getElementById("searchInput");
+  const closeBt = document.getElementById("searchClose"), tbody = document.querySelector("#table tbody");
+  const hint = document.getElementById("searchHint");
+  
+  const show = () => { 
+    overlay.classList.add("show"); 
+    overlay.setAttribute("aria-hidden","false"); 
+    hint?.style.setProperty("display", "none", "important"); 
+    setTimeout(() => input?.focus(), 50); 
+  };
+  
+  const hide = () => {
+    overlay.classList.remove("show");
+    overlay.setAttribute("aria-hidden", "true");
+    if (hint) { hint.style.display = ""; }
+    if (input) {
+      input.value = "";
+      filterTable("");
+    }
+  };
+
+  const filterTable = (query) => {
+    const normQuery = query.toLowerCase();
+    tbody?.querySelectorAll("tr").forEach(tr => {
+      tr.style.display = (!normQuery || tr.textContent.toLowerCase().includes(normQuery)) ? "" : "none";
+    });
+  };
+
+  window.addEventListener("keydown", e => {
+    const t = e.target;
+    if ((t instanceof Element) && t.closest('input, textarea, select')) return;
+    if (e.ctrlKey || e.metaKey) return;
+    if (e.key === "q" || e.key === "Q") { e.preventDefault(); show(); }
+    if (e.key === "Escape" && overlay.classList.contains("show")) { e.preventDefault(); hide(); }
+  });
+
+  input?.addEventListener("input", () => filterTable(input.value));
+  input?.addEventListener("keydown", e => { if(e.key==="Escape") hide(); });
+  closeBt?.addEventListener("click", hide);
+  overlay?.addEventListener("click", e => { if (e.target === overlay) hide(); });
+})();
+
+/* --- Pop-up Contributo (W) --- */
+(function(){
+  const overlay = document.getElementById('contributeOverlay'), closeBtn = document.getElementById('contributeClose');
+  const hint = document.getElementById('contributeHint');
+  
+  const show = () => { 
+    overlay.classList.add('show'); 
+    overlay.setAttribute('aria-hidden','false'); 
+    hint?.style.setProperty("display", "none", "important"); 
+  };
+  
+  const hide = () => {
+    overlay.classList.remove('show');
+    overlay.setAttribute('aria-hidden', 'true');
+    if (hint) { hint.style.display = ""; }
+  };
+
+  window.addEventListener('keydown', e => {
+    const t = e.target;
+    if ((t instanceof Element) && t.closest('input, textarea, select')) return;
+    if (e.ctrlKey || e.metaKey) return;
+    if (e.key === 'w' || e.key === 'W') { e.preventDefault(); show(); }
+    if (e.key === 'Escape' && overlay.classList.contains('show')) { e.preventDefault(); hide(); }
+  });
+
+  closeBtn?.addEventListener('click', hide);
+  overlay?.addEventListener('click', e => { if (e.target === overlay) hide(); });
+})();
+
+/* --- Palla Contatore --- */
+(function () {
+  const ball = document.getElementById("ball"); if (!ball) return;
+  let r = ball.offsetWidth / 2, x = 60, y = 60, vx = 180, vy = 130, scrollKick = 0;
+  let dragging = false, lastTime = performance.now();
+  const G = 900, DRAG = 0.9985, REST = 0.82, S_GAIN = 5.0, S_DECAY = 0.90, SLEEP = 6, DT = 1/120;
+  let accumulator = 0;
+  const setPos = (nx, ny) => { x=nx; y=ny; ball.style.transform = `translate(${x-r}px, ${y-r}px)`; };
+  setPos(x, y);
+  function physicsStep(){
+    const W = innerWidth, H = innerHeight; vy += G * DT + scrollKick * DT; scrollKick *= S_DECAY;
+    vx *= DRAG; vy *= DRAG; x += vx * DT; y += vy * DT;
+    if (x - r < 0) { x = r; if (vx < 0) vx = -vx * REST; } if (x + r > W) { x = W - r; if (vx > 0) vx = -vx * REST; }
+    if (y - r < 0) { y = r; if (vy < 0) { vy = -vy * REST; if (Math.abs(vy) < SLEEP) vy = 0; } }
+    if (y + r > H) { y = H - r; if (vy > 0) { vy = -vy * REST; if (Math.abs(vy) < SLEEP) vy = 0; } }
+  }
+  function loop(now){
+    let dt = (now - lastTime) / 1000; lastTime = now; if (dt > 0.1) dt = 0.1; accumulator += dt;
+    if (!dragging) { while (accumulator >= DT) { physicsStep(); accumulator -= DT; } setPos(x, y); } else { accumulator = 0; }
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+  let lastPointer = null;
+  ball.addEventListener("pointerdown", e => { dragging=true; ball.setPointerCapture(e.pointerId); lastPointer={x:e.clientX,y:e.clientY,t:performance.now()}; });
+  addEventListener("pointermove", e => {
+    if(!dragging) return;
+    const W=innerWidth, H=innerHeight;
+    const nx = Math.max(r, Math.min(W - r, e.clientX)), ny = Math.max(r, Math.min(H - r, e.clientY));
+    const now = performance.now(), p_dt = (now - lastPointer.t) / 1000;
+    if(p_dt > 0){ vx = (e.clientX - lastPointer.x) / p_dt; vy = (e.clientY - lastPointer.y) / p_dt; }
+    lastPointer = {x:e.clientX, y:e.clientY, t:now}; setPos(nx, ny);
+  });
+  addEventListener("pointerup", () => { dragging = false; });
+  let lastScrollY = window.scrollY;
+  addEventListener("scroll", () => { let yNow = window.scrollY; scrollKick += (lastScrollY - yNow) * S_GAIN; lastScrollY = yNow; }, {passive: true});
+  addEventListener("resize", () => { r = ball.offsetWidth / 2; setPos(x, y); });
+})();
+
+/* --- Upload helper --- */
+async function uploadImageFile(file){
+  const cloudName = import.meta.env.PUBLIC_CLOUDINARY_CLOUD_NAME, preset = import.meta.env.PUBLIC_CLOUDINARY_UPLOAD_PRESET;
+  const imgurId = import.meta.env.PUBLIC_IMGUR_CLIENT_ID;
+  if (cloudName && preset){
+    const url = `https://api.cloudinary.com/v1_1/${cloudName}/upload`;
+    const fd = new FormData(); fd.append('file', file); fd.append('upload_preset', preset);
+    const res = await fetch(url, { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error?.message || 'Upload Cloudinary fallito');
+    return data.secure_url || data.url;
+  } else if (imgurId){
+    const fd = new FormData(); fd.append('image', file);
+    const res = await fetch('https://api.imgur.com/3/image', { method: 'POST', headers: { Authorization: 'Client-ID ' + imgurId }, body: fd });
+    const data = await res.json();
+    if (!res.ok || !data?.data?.link) throw new Error(data?.data?.error || 'Upload Imgur fallito');
+    return data.data.link;
+  } else { throw new Error('Upload non configurato. Imposta le variabili d\'ambiente PUBLIC per Cloudinary o Imgur.'); }
+}
+
+/* --- Popolamento select opere (nativo) --- */
+(function(){
+  const select = document.getElementById('c_work_select');
+  const worksDataEl = document.getElementById('worksData');
+  if (!select || !worksDataEl) return;
+  try {
+    const works = JSON.parse(worksDataEl.textContent || '[]');
+    select.innerHTML = '<option value="" disabled selected>— Seleziona —</option>';
+    if (Array.isArray(works) && works.length){
+      works.sort((a,b)=> a.title.localeCompare(b.title,'it',{sensitivity:'base'}));
+      for (const w of works){
+        const opt = document.createElement('option');
+        opt.value = w.id;        // recordId Airtable
+        opt.textContent = w.title;
+        select.appendChild(opt);
+      }
+    }
+  } catch (e) { console.error('Impossibile leggere worksData JSON', e); }
+})();
+
+/* --- PATCH: Aggiungi immagine a record --- */
+(function(){
+  const form = document.getElementById('contribute-form'); if (!form) return;
+  const works = JSON.parse(document.getElementById('worksData')?.textContent || '[]');
+  form.addEventListener('submit', async function(e){
+    e.preventDefault();
+    const submitBtn = e.target.querySelector('.submit-btn'), msgDiv = document.getElementById('form-message');
+    const selEl = document.getElementById('c_work_select');
+    const recordId = selEl?.value || '';
+    const urlInput = document.getElementById('c_image_url').value.trim();
+    const file = document.getElementById('c_image_file')?.files[0];
+    const showMsg = (txt, type) => { msgDiv.textContent = txt; msgDiv.className = `form-message ${type}`; msgDiv.style.display = 'block'; };
+    if (!recordId) return showMsg('Seleziona un’opera.', 'error');
+    if (!urlInput && !file) return showMsg('Inserisci un URL oppure carica un file.', 'error');
+    submitBtn.disabled = true; submitBtn.textContent = 'Invio in corso...'; msgDiv.style.display = 'none';
+    try {
+      const finalUrl = file ? await uploadImageFile(file) : urlInput;
+      const work = works.find(w => w.id === recordId);
+      const existing = work?.attachments.map(att => ({ id: att.id })) || [];
+      const body = { fields: { Immagini: existing.concat([{ url: finalUrl }]) } };
+      const res = await fetch(
+        `https://api.airtable.com/v0/${import.meta.env.PUBLIC_AIRTABLE_BASE_ID}/${import.meta.env.PUBLIC_AIRTABLE_TABLE_NAME}/${recordId}`,
+        { method: 'PATCH', headers: { 'Authorization': `Bearer ${import.meta.env.PUBLIC_AIRTABLE_API_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error?.message || 'Errore da Airtable');
+      const strip = document.querySelector(`tr[data-record-id="${recordId}"] .img-strip`);
+      if (strip){
+        const img = document.createElement('img');
+        Object.assign(img, { className: 'thumb', src: finalUrl, alt: work?.title || 'Nuova immagine' });
+        img.dataset.full = finalUrl; strip.appendChild(img); strip.scrollLeft = strip.scrollWidth;
+      }
+      showMsg('✅ Immagine aggiunta con successo!', 'success');
+      e.target.reset();
+      if (selEl) selEl.selectedIndex = 0; // reset placeholder
+    } catch (err) { showMsg(`❌ ${err.message || 'Errore durante l’invio.'}`, 'error');
+    } finally { submitBtn.disabled = false; submitBtn.textContent = 'Aggiungi immagine'; }
+  });
+})();
+    </script>
+</body>
 </html>
