@@ -294,8 +294,11 @@ tbody tr:hover { background: #fff200; }
 .form-group input[type="text"],
 .form-group input[type="url"],
 .form-group input[type="file"],
-.form-group select { min-height: 44px; }
-
+.form-group select{
+  width: 100%; max-width: 100%; box-sizing: border-box; display: block;
+  border: 3px solid #0b0b0b; border-radius: 0; padding: 12px 14px; font-size: 16px; outline: none; background:#fff; color:#0b0b0b;
+  transition: background-color .12s ease, box-shadow .12s ease;
+}
 .form-group input[type="text"]:hover,
 .form-group input[type="url"]:hover,
 .form-group input[type="file"]:hover,
@@ -310,18 +313,22 @@ tbody tr:hover { background: #fff200; }
 .form-message.success { display: block; color: #046c4e; }
 .form-message.error   { display: block; color: #a11; }
     /* ====== FORM: rifiniture ====== */
-/* Wrapper visivo per il file input (niente doppio bordo) */
-.file-wrap{
-  border: 3px solid #0b0b0b;
-  padding: 8px 10px;
-  background:#fff;
-}
+.file-wrap{ border: 3px solid #0b0b0b; padding: 8px 10px; background:#fff; }
 .file-wrap:hover{ background:#fff200; }
 .file-wrap input[type="file"]{
   width: 100%;
-  border: 0;          /* ← rimuove il bordo interno che creava l’effetto “doppio box” */
+  border: 0 !important;
+  outline: 0;
   padding: 0;
   background: transparent;
+  box-shadow: none;
+  appearance: none;
+  -webkit-appearance: none;
+}
+.file-wrap input[type="file"]:hover{ background: transparent !important; }
+.file-wrap input[type="file"]::file-selector-button,
+.file-wrap input[type="file"]::-webkit-file-upload-button{
+  /* stile nativo del pulsante; nessun bordo aggiuntivo */
 }
 .form-group select{ min-height: 44px; }
 </style>
@@ -397,15 +404,12 @@ tbody tr:hover { background: #fff200; }
             </select>
           </div>
           <div class="form-group">
+            <label for="c_image_url">URL immagine</label>
+            <input type="url" id="c_image_url" placeholder="https://esempio.com/immagine.jpg" />
+          </div>
+          <div class="form-group">
             <label for="c_image_file">Oppure carica un file</label>
-            <div class="file-wrap">
-              <input type="file" id="c_image_file" accept="image/*" />
-            </div>
-            <small>
-              Per l’upload diretto configura:
-              • <strong>Cloudinary</strong>: <code>PUBLIC_CLOUDINARY_CLOUD_NAME</code>, <code>PUBLIC_CLOUDINARY_UPLOAD_PRESET</code>
-              • <strong>Imgur</strong>: <code>PUBLIC_IMGUR_CLIENT_ID</code>
-            </small>
+            <div class="file-wrap"><input type="file" id="c_image_file" accept="image/*" /></div>
           </div>
           <button type="submit" class="submit-btn">Aggiungi immagine</button>
           <div id="form-message" class="form-message"></div>
@@ -623,22 +627,43 @@ async function uploadImageFile(file){
 
 /* --- Popolamento select opere (nativo) --- */
 (function(){
-  const select = document.getElementById('c_work_select');
-  const worksDataEl = document.getElementById('worksData');
-  if (!select || !worksDataEl) return;
-  try {
-    const works = JSON.parse(worksDataEl.textContent || '[]');
+  document.addEventListener('DOMContentLoaded', () => {
+    const select = document.getElementById('c_work_select');
+    const worksDataEl = document.getElementById('worksData');
+    if (!select) return;
+
+    function getFromJSON(){
+      try {
+        if (!worksDataEl) return [];
+        const data = JSON.parse(worksDataEl.textContent || '[]');
+        return Array.isArray(data) ? data.filter(w => w && w.id && (w.title||'').trim()) : [];
+      } catch(err){ console.error('worksData JSON error', err); return []; }
+    }
+    function getFromDOM(){
+      const out = [];
+      document.querySelectorAll('#table tbody tr[data-record-id]').forEach(tr => {
+        const id = tr.getAttribute('data-record-id');
+        const title = tr.querySelector('td:nth-child(2) .title-text')?.textContent?.trim();
+        if (id && title) out.push({ id, title });
+      });
+      return out;
+    }
+
+    const works = [...getFromJSON(), ...getFromDOM()]
+      .reduce((acc,w)=>{ if(!acc.some(x=>x.id===w.id)) acc.push(w); return acc; }, []);
+
     select.innerHTML = '<option value="" disabled selected>— Seleziona —</option>';
-    if (Array.isArray(works) && works.length){
-      works.sort((a,b)=> a.title.localeCompare(b.title,'it',{sensitivity:'base'}));
+    if (works.length){
+      works.sort((a,b)=> String(a.title).localeCompare(String(b.title), 'it', { sensitivity:'base' }));
+      const frag = document.createDocumentFragment();
       for (const w of works){
         const opt = document.createElement('option');
-        opt.value = w.id;        // recordId Airtable
-        opt.textContent = w.title;
-        select.appendChild(opt);
+        opt.value = w.id; opt.textContent = String(w.title);
+        frag.appendChild(opt);
       }
+      select.appendChild(frag);
     }
-  } catch (e) { console.error('Impossibile leggere worksData JSON', e); }
+  });
 })();
 
 /* --- PATCH: Aggiungi immagine a record --- */
