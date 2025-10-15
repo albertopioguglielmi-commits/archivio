@@ -173,27 +173,35 @@ tbody td:nth-child(10) { font-size: 12px; line-height: 1.35; padding-top: 12px; 
 thead th:nth-child(10) { font-size: 12px; }
 
 /* ====== GALLERIA IMMAGINI IN CELLA ====== */
-.gallery { position: relative; }
-.img-strip{
-  display: flex;
-  gap: 8px;
-  overflow-x: auto;
-  padding-bottom: 4px;
-  scroll-behavior: smooth;
-}
-.img-strip::-webkit-scrollbar{ height: 6px; }
-.img-strip::-webkit-scrollbar-thumb{ background:#bbb; }
-
-.thumb{
-  display: block;
+.gallery {
+  position: relative;
   width: 100%;
-  max-width: 360px;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.img-strip {
+  display: flex;
+  transition: transform 0.3s ease;
+  width: 100%;
+}
+.img-strip::-webkit-scrollbar { height: 6px; }
+.img-strip::-webkit-scrollbar-thumb { background: #bbb; }
+
+.thumb {
+  flex: 0 0 100%;
+  max-width: 100%;
   height: auto;
+  object-fit: contain;
   border: 3px solid #0b0b0b;
-  border-radius: 0;
-  cursor: zoom-in;
-  flex: 0 0 auto;
   background: #fff;
+  cursor: zoom-in;
+  transition: transform .15s ease, box-shadow .15s ease;
+}
+
+.thumb:hover {
+  transform: scale(1.02);
+  box-shadow: 0 0 0 2px #fff200;
 }
 
 .gallery-btn{
@@ -396,7 +404,7 @@ tbody tr:hover { background: #fff200; }
           <h3>Aggiungi un’immagine a un’opera esistente</h3>
           <button id="contributeClose" class="contrib-close" aria-label="Chiudi">✕</button>
         </div>
-        <form id="contribute-form" class="contribute-form">
+        <form id="contribute-form" class="contribute-form" novalidate>
           <div class="form-group">
             <label for="c_work_select">Seleziona opera *</label>
             <select id="c_work_select" name="workId" required>
@@ -446,14 +454,56 @@ tbody tr:hover { background: #fff200; }
   modal?.addEventListener("click", e => { if (e.target === modal) modal.classList.remove("show"); });
 })();
 
-/* --- Pulsanti galleria (scroll) --- */
+/* --- Pulsanti galleria (una immagine per volta) --- */
 (function(){
   document.querySelectorAll("tbody .gallery").forEach(gallery => {
-    const strip = gallery.querySelector(".img-strip"), prev = gallery.querySelector(".gallery-prev"), next = gallery.querySelector(".gallery-next");
-    if (!strip || !prev || !next) return;
-    const step = 380;
-    prev.addEventListener("click", () => strip.scrollBy({left: -step, behavior: "smooth"}));
-    next.addEventListener("click", () => strip.scrollBy({left: step, behavior: "smooth"}));
+    const strip = gallery.querySelector(".img-strip"),
+          imgs = strip?.querySelectorAll(".thumb") || [],
+          prev = gallery.querySelector(".gallery-prev"),
+          next = gallery.querySelector(".gallery-next");
+
+    if (!strip || !imgs.length || !prev || !next) return;
+
+    let index = 0;
+
+    function updateView(){
+      const offset = -index * 100;
+      strip.style.transform = `translateX(${offset}%)`;
+      prev.style.opacity = index === 0 ? 0.4 : 1;
+      next.style.opacity = index === imgs.length - 1 ? 0.4 : 1;
+    }
+
+    prev.addEventListener("click", () => {
+      if (index > 0) { index--; updateView(); }
+    });
+
+    next.addEventListener("click", () => {
+      if (index < imgs.length - 1) { index++; updateView(); }
+    });
+
+    updateView(); // iniziale
+  });
+})();
+
+/* --- Adattamento dinamico altezza galleria --- */
+(function(){
+  const galleries = document.querySelectorAll(".gallery .img-strip");
+  galleries.forEach(strip => {
+    const adjustHeight = () => {
+      const imgs = Array.from(strip.querySelectorAll("img.thumb"));
+      const visible = imgs.find(img => {
+        const rect = img.getBoundingClientRect();
+        return rect.left >= 0 && rect.right <= window.innerWidth;
+      }) || imgs[0];
+      if (visible) {
+        strip.style.height = visible.offsetHeight + "px";
+      }
+    };
+    strip.addEventListener("scroll", () => {
+      requestAnimationFrame(adjustHeight);
+    });
+    window.addEventListener("resize", adjustHeight);
+    adjustHeight(); // iniziale
   });
 })();
 
@@ -667,44 +717,133 @@ async function uploadImageFile(file){
 })();
 
 /* --- PATCH: Aggiungi immagine a record --- */
-(function(){
-  const form = document.getElementById('contribute-form'); if (!form) return;
-  const works = JSON.parse(document.getElementById('worksData')?.textContent || '[]');
-  form.addEventListener('submit', async function(e){
+(function () {
+  async function onSubmit(e) {
     e.preventDefault();
-    const submitBtn = e.target.querySelector('.submit-btn'), msgDiv = document.getElementById('form-message');
+    e.stopPropagation();
+
+    const form = e.currentTarget;
+    const submitBtn = form.querySelector('.submit-btn');
+    const msgDiv = document.getElementById('form-message');
     const selEl = document.getElementById('c_work_select');
     const recordId = selEl?.value || '';
-    const urlInput = document.getElementById('c_image_url').value.trim();
-    const file = document.getElementById('c_image_file')?.files[0];
-    const showMsg = (txt, type) => { msgDiv.textContent = txt; msgDiv.className = `form-message ${type}`; msgDiv.style.display = 'block'; };
+    const urlEl = document.getElementById('c_image_url');
+    const fileEl = document.getElementById('c_image_file');
+    const urlInput = (urlEl?.value || '').trim();
+    const file = fileEl?.files?.[0];
+
+    const showMsg = (txt, type) => {
+      msgDiv.textContent = txt;
+      msgDiv.className = `form-message ${type}`;
+      msgDiv.style.display = 'block';
+    };
+
     if (!recordId) return showMsg('Seleziona un’opera.', 'error');
     if (!urlInput && !file) return showMsg('Inserisci un URL oppure carica un file.', 'error');
-    submitBtn.disabled = true; submitBtn.textContent = 'Invio in corso...'; msgDiv.style.display = 'none';
+
+    const apiKey = import.meta.env.PUBLIC_AIRTABLE_API_KEY;
+    const baseId = import.meta.env.PUBLIC_AIRTABLE_BASE_ID;
+    const tableName = encodeURIComponent(import.meta.env.PUBLIC_AIRTABLE_TABLE_NAME);
+    if (!apiKey || !baseId || !tableName) {
+      return showMsg('Configurazione Airtable mancante (PUBLIC_*).', 'error');
+    }
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Invio in corso...';
+    msgDiv.style.display = 'none';
+
     try {
       const finalUrl = file ? await uploadImageFile(file) : urlInput;
-      const work = works.find(w => w.id === recordId);
-      const existing = work?.attachments.map(att => ({ id: att.id })) || [];
-      const body = { fields: { Immagini: existing.concat([{ url: finalUrl }]) } };
-      const res = await fetch(
-        `https://api.airtable.com/v0/${import.meta.env.PUBLIC_AIRTABLE_BASE_ID}/${import.meta.env.PUBLIC_AIRTABLE_TABLE_NAME}/${recordId}`,
-        { method: 'PATCH', headers: { 'Authorization': `Bearer ${import.meta.env.PUBLIC_AIRTABLE_API_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
-      );
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error?.message || 'Errore da Airtable');
-      const strip = document.querySelector(`tr[data-record-id="${recordId}"] .img-strip`);
-      if (strip){
-        const img = document.createElement('img');
-        Object.assign(img, { className: 'thumb', src: finalUrl, alt: work?.title || 'Nuova immagine' });
-        img.dataset.full = finalUrl; strip.appendChild(img); strip.scrollLeft = strip.scrollWidth;
+
+      let existing = [];
+      try {
+        const raw = document.getElementById('worksData')?.textContent || '[]';
+        const works = JSON.parse(raw);
+        const work = Array.isArray(works) ? works.find(w => w.id === recordId) : null;
+        if (work?.attachments?.length) {
+          existing = work.attachments.map(att => ({ id: att.id })).filter(x => x.id);
+        }
+      } catch {
+        /* fallback sotto */
       }
+
+      if (!existing.length) {
+        const recRes = await fetch(`https://api.airtable.com/v0/${baseId}/${tableName}/${recordId}`, {
+          headers: { Authorization: `Bearer ${apiKey}` }
+        });
+        if (recRes.ok) {
+          const rec = await recRes.json();
+          const imgs = rec?.fields?.Immagini || [];
+          if (Array.isArray(imgs)) existing = imgs.map(a => ({ id: a.id })).filter(x => x.id);
+        }
+      }
+
+      const res = await fetch(`https://api.airtable.com/v0/${baseId}/${tableName}/${recordId}`, {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ fields: { Immagini: existing.concat([{ url: finalUrl }]) } })
+      });
+
+      const bodyText = await res.text();
+      let data = {};
+      try {
+        if (bodyText) data = JSON.parse(bodyText);
+      } catch {
+        throw new Error(`Risposta non JSON (${res.status}).`);
+      }
+      if (!res.ok) throw new Error(data?.error?.message || `${res.status} ${res.statusText}`);
+
+      const strip = document.querySelector(`tr[data-record-id="${recordId}"] .img-strip`);
+      if (strip) {
+        const img = document.createElement('img');
+        img.className = 'thumb';
+        img.src = finalUrl;
+        img.alt = 'Nuova immagine';
+        img.dataset.full = finalUrl;
+        strip.appendChild(img);
+        strip.scrollLeft = strip.scrollWidth;
+      }
+
       showMsg('✅ Immagine aggiunta con successo!', 'success');
-      e.target.reset();
-      if (selEl) selEl.selectedIndex = 0; // reset placeholder
-    } catch (err) { showMsg(`❌ ${err.message || 'Errore durante l’invio.'}`, 'error');
-    } finally { submitBtn.disabled = false; submitBtn.textContent = 'Aggiungi immagine'; }
-  });
+      form.reset();
+      if (selEl) selEl.selectedIndex = 0;
+
+      try {
+        const jsonEl = document.getElementById('worksData');
+        const works = JSON.parse(jsonEl.textContent || '[]');
+        const idx = works.findIndex(w => w.id === recordId);
+        const newId = data?.fields?.Immagini?.slice(-1)?.[0]?.id || '';
+        if (idx >= 0) {
+          works[idx].attachments = (works[idx].attachments || []).concat([{ id: newId, url: finalUrl }]);
+          jsonEl.textContent = JSON.stringify(works);
+        }
+      } catch { /* non critico */ }
+    } catch (err) {
+      showMsg(`❌ ${err.message || 'Errore durante l’invio.'}`, 'error');
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Aggiungi immagine';
+    }
+  }
+
+  function wireUp() {
+    const form = document.getElementById('contribute-form');
+    if (!form || form.dataset.bound === 'true') return;
+    form.dataset.bound = 'true';
+    form.setAttribute('novalidate', '');
+    form.addEventListener('submit', onSubmit);
+  } // <-- ✅ QUESTA GRAFFA MANCAVA
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', wireUp);
+  } else {
+    wireUp();
+  }
 })();
+
     </script>
 </body>
 </html>
